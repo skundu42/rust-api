@@ -1,8 +1,23 @@
 //! Centralized error handling.
 //!
-//! Axum lets us convert domain errors into HTTP responses by implementing
-//! `IntoResponse`. Keeping everything in one enum curbs boilerplate in the
-//! handlers.
+//! # Error Handling in Rust
+//!
+//! Rust uses the `Result<T, E>` enum for error handling. We define our own
+//! `AppError` enum to represent all possible things that can go wrong in our
+//! domain.
+//!
+//! # `thiserror` vs `anyhow`
+//!
+//! - `thiserror`: Used for libraries and domain errors. It helps derive the
+//!   `std::error::Error` trait automatically.
+//! - `anyhow`: Used in application code (like `main.rs`) where we just want to
+//!   propagate errors easily without defining custom types for everything.
+//!
+//! # `IntoResponse`
+//!
+//! Axum needs to know how to convert our `AppError` into an HTTP response.
+//! By implementing `IntoResponse`, we can return `Result<T, AppError>` directly
+//! from our handlers.
 
 use axum::{
     http::StatusCode,

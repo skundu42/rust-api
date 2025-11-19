@@ -2,7 +2,16 @@
 //!
 //! `lib.rs` exposes the Axum router so integration tests can instantiate the
 //! full stack without spinning up a TCP listener.
+//!
+//! # Middleware (Tower)
+//!
+//! Axum is built on top of `tower`, a library for modular networking components.
+//! "Layers" allow us to wrap our application with cross-cutting concerns like:
+//! - **Compression**: Gzip/Brotli responses automatically.
+//! - **CORS**: Allow/deny requests from different origins (e.g., frontend apps).
+//! - **Tracing**: Log every incoming request and outgoing response.
 
+pub mod config;
 pub mod errors;
 pub mod models;
 pub mod routes;
@@ -20,7 +29,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     // Each call to `route` returns a new router, so we can keep chaining.
     Router::new()
-        .route("/health", get(routes::health))
+    .route("/health", get(routes::health))
         .route(
             "/todos",
             get(routes::list_todos).post(routes::create_todo),

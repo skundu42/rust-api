@@ -3,7 +3,7 @@
 //! Keeping the bulk of our logic inside `lib.rs` means the `main` function just
 //! wires up logging, state, and graceful shutdown.
 
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use axum::serve;
@@ -16,20 +16,23 @@ async fn main() -> Result<()> {
     // Loading `.env` files locally keeps credentials out of the shell session.
     dotenvy::dotenv().ok();
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        "rust_api=info,axum::rejection=trace,tower_http=info".into()
-    });
+    // Load configuration from the environment.
+    // This will fail fast if required variables are missing.
+    let config = rust_api::config::Config::from_env()?;
+
+    // Initialize the tracing subscriber for logging.
+    // `EnvFilter` uses the `RUST_LOG` variable to determine what to log.
+    let env_filter = EnvFilter::new(&config.rust_log);
 
     fmt().with_env_filter(env_filter).compact().init();
 
     let state = AppState::new_in_memory();
     let app = app(state);
 
-    let addr: SocketAddr = "0.0.0.0:8080".parse()?;
-    tracing::info!(%addr, "starting server");
+    tracing::info!(addr = %config.server_addr, "starting server");
 
     // `TcpListener` + `serve` gives us finer control over graceful shutdown.
-    let listener = TcpListener::bind(addr).await?;
+    let listener = TcpListener::bind(config.server_addr).await?;
     serve(listener, app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await?;

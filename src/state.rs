@@ -1,12 +1,25 @@
 //! Application state and repository implementation.
 //!
-//! Axum expects state to be cloneable, so we wrap our repository in an `Arc`.
-//! The repo itself is a trait, which keeps us flexible about where data lives.
+//! # The Repository Pattern
+//!
+//! We use the Repository pattern to decouple our business logic (routes) from
+//! the data access layer. This allows us to:
+//! - Swap out the storage backend (e.g., in-memory -> Postgres) without changing routes.
+//! - Mock the database for unit testing.
+//!
+//! # Concurrency
+//!
+//! Axum handlers run concurrently on multiple threads. To share state safely,
+//! we wrap it in an `Arc` (Atomic Reference Counted) pointer.
+//!
+//! Inside the `Arc`, we need interior mutability. We use `RwLock` (Read-Write Lock)
+//! instead of `Mutex` because it allows multiple concurrent readers (e.g., many
+//! users listing todos at once) while ensuring exclusive access for writers.
 
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::{
     errors::AppError,
@@ -14,6 +27,9 @@ use crate::{
 };
 
 /// CRUD contract shared by handlers and tests.
+///
+/// `Send + Sync + 'static` ensures the trait object can be safely shared
+/// across threads in the async runtime.
 #[async_trait]
 pub trait TodoRepo: Send + Sync + 'static {
     async fn list(&self) -> Result<Vec<Todo>, AppError>;
@@ -23,8 +39,7 @@ pub trait TodoRepo: Send + Sync + 'static {
     async fn delete(&self, id: u64) -> Result<(), AppError>;
 }
 
-/// Minimal in-memory store guarded by a mutex so async tasks can mutate it
-/// sequentially.
+/// Minimal in-memory store guarded by a RwLock.
 #[derive(Default)]
 struct InMemory {
     next_id: u64,
@@ -32,9 +47,10 @@ struct InMemory {
 }
 
 #[async_trait]
-impl TodoRepo for Mutex<InMemory> {
+impl TodoRepo for RwLock<InMemory> {
     async fn list(&self) -> Result<Vec<Todo>, AppError> {
-        let guard = self.lock().await;
+        // Acquire a read lock. Multiple readers can hold this simultaneously.
+        let guard = self.read().await;
         Ok(guard.items.values().cloned().collect())
     }
 
@@ -47,7 +63,8 @@ impl TodoRepo for Mutex<InMemory> {
             ));
         }
 
-        let mut guard = self.lock().await;
+        // Acquire a write lock. This blocks until all readers/writers are done.
+        let mut guard = self.write().await;
         guard.next_id += 1;
 
         let todo = Todo {
@@ -60,7 +77,7 @@ impl TodoRepo for Mutex<InMemory> {
     }
 
     async fn get(&self, id: u64) -> Result<Todo, AppError> {
-        let guard = self.lock().await;
+        let guard = self.read().await;
         guard.items.get(&id).cloned().ok_or(AppError::NotFound)
     }
 
@@ -84,7 +101,7 @@ impl TodoRepo for Mutex<InMemory> {
             ));
         }
 
-        let mut guard = self.lock().await;
+        let mut guard = self.write().await;
         let todo = guard
             .items
             .get_mut(&id)
@@ -102,7 +119,7 @@ impl TodoRepo for Mutex<InMemory> {
     }
 
     async fn delete(&self, id: u64) -> Result<(), AppError> {
-        let mut guard = self.lock().await;
+        let mut guard = self.write().await;
         guard
             .items
             .remove(&id)
@@ -120,7 +137,7 @@ impl AppState {
     /// Provide a ready-to-go state object backed by the in-memory repo.
     pub fn new_in_memory() -> Self {
         Self {
-            repo: Arc::new(Mutex::new(InMemory::default())),
+            repo: Arc::new(RwLock::new(InMemory::default())),
         }
     }
 

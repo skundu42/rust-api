@@ -1,9 +1,24 @@
 //! HTTP route handlers.
 //!
-//! Each function maps roughly to a REST verb and returns `Result` so Axum can
-//! convert our custom errors into HTTP responses automatically.
+//! # Axum Handlers
+//!
+//! Axum handlers are async functions that take "extractors" as arguments and
+//! return something that implements `IntoResponse`.
+//!
+//! # Extractors
+//!
+//! - `State(app)`: Access shared application state (e.g., database connection).
+//! - `Path(id)`: Extract parameters from the URL path (e.g., `/todos/:id`).
+//! - `Json(payload)`: Parse the request body as JSON.
+//!
+//! The order of extractors matters! `State` and `Path` usually come first,
+//! and `Json` (which consumes the body) comes last.
 
-use axum::{extract::{Path, State}, http::StatusCode, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 
 use crate::{
     errors::AppError,
@@ -24,13 +39,14 @@ pub async fn list_todos(
     Ok(Json(todos))
 }
 
-/// `POST /todos` - accepts a JSON body and returns `201 Created` with the
-/// stored item. Returning the whole struct is handy for clients so they learn
-/// the server-assigned id immediately.
+/// `POST /todos` - accepts a JSON body and returns `201 Created`.
 pub async fn create_todo(
     State(app): State<AppState>,
     Json(payload): Json<CreateTodo>,
 ) -> Result<(StatusCode, Json<Todo>), AppError> {
+    // Validate input before hitting the database.
+    payload.validate()?;
+
     let todo = app.repo().create(payload).await?;
     Ok((StatusCode::CREATED, Json(todo)))
 }
@@ -44,19 +60,20 @@ pub async fn get_todo(
     Ok(Json(todo))
 }
 
-/// `PUT /todos/:id` - update existing todos. We reuse the repo validation to
-/// ensure empty payloads or whitespace titles get rejected.
+/// `PUT /todos/:id` - update existing todos.
 pub async fn update_todo(
     Path(id): Path<u64>,
     State(app): State<AppState>,
     Json(payload): Json<UpdateTodo>,
 ) -> Result<Json<Todo>, AppError> {
+    // Validate input.
+    payload.validate()?;
+
     let todo = app.repo().update(id, payload).await?;
     Ok(Json(todo))
 }
 
-/// `DELETE /todos/:id` - respond with `204 No Content` so clients know the
-/// deletion succeeded even though there is no body.
+/// `DELETE /todos/:id` - respond with `204 No Content`.
 pub async fn delete_todo(
     Path(id): Path<u64>,
     State(app): State<AppState>,
